@@ -76,6 +76,99 @@ followed by a unit."
      :amount (string-to-number (replace-regexp-in-string "," "." (match-string 1 amount)))
      :unit (match-string 2 amount))))
 
+(defun make-org-cookbook-recipe (&rest args)
+  "Make new cookbook recipe.
+
+ARGS is a plist of keys and values we want to insert into the new
+recipe.
+
+The properties which are not in ARGS are populated according to
+`org-cookbook-properties.'"
+  (let ((re (make-hash-table :test 'equal)))
+    (while args
+      (org-cookbook-recipe-put (pop args) (pop args) re))
+    (-each (org-cookbook-properties)
+      (-lambda ((name . def))
+        (unless (org-cookbook-recipe-get name re)
+          (org-cookbook-recipe-put name def re))))
+    (unless (org-cookbook-recipe-get "AMOUNT" re)
+      (org-cookbook-recipe-put "AMOUNT" "1" re))
+    re))
+
+(defalias 'org-cookbook-recipe-get 'gethash)
+(defalias 'org-cookbook-recipe-put 'puthash)
+
+(defcustom org-cookbook-properties '(
+                                     "PROTEINS"
+                                     "CARBOHYDRATES"
+                                     "FATS"
+                                     "CALORIES"
+                                     "FIBRE"
+                                     ("COST" . 0)
+                                     )
+  "List of properties `org-cookbook' tracks.
+
+A list of strings where each string is an org headline
+property.
+
+All these properties should have as values numbers.  If you put
+anything else there things will break!
+
+Each value can optionally be a cons cell where the `car' is the
+name and `cdr' is a default value.  Default default value is 0."
+  :group 'org-cookbook
+  :type '(repeat (choice
+                  (string :tag "Property")
+                  (cons :tag "Property with default value"
+                   (string :tag "Property name")
+                   (number :tag "Default value")))))
+
+(defun org-cookbook-properties ()
+  "Return `org-cookbook-properties' with default default value.
+
+This means that in case the value is a cons (with default value)
+extract just the `car'."
+  (--map (if (consp it) it (cons it 0)) org-cookbook-properties))
+
+(defun org-cookbook-map-recipe (function &rest recipes)
+  "Call FUNCTION on each recipe property.
+
+RECIPES is a list of recipes.  FUNCTION should have arity equal
+to number of recipes plus one.  The function is then called with
+the first argument being the property name and the rest supplied
+from each recipe in order as they are passed to the function.
+
+Return a recipe whose each property is the result of applying
+FUNCTION to respective properties of RECIPES."
+  (let* ((props (org-cookbook-properties))
+         (results (-map
+                   (-lambda ((p))
+                     (apply
+                      function p
+                      (--map
+                       (org-cookbook-recipe-get p it)
+                       recipes)))
+                   props))
+         (re (make-org-cookbook-recipe)))
+    (-each (-zip (-map 'car props) results)
+      (-lambda ((k . v)) (org-cookbook-recipe-put k v re)))
+    re))
+
+(defun org-cookbook-get-properties ()
+  "Get properties of recipe at point.
+
+Properties are retrieved according to `org-cookbook-properties'."
+  (let ((re (make-org-cookbook-recipe)))
+    (-each (org-cookbook-properties)
+      (-lambda ((name . def))
+        (org-cookbook-recipe-put
+         name
+         (or (--when-let (org-entry-get (point) name) (string-to-number it)) def)
+         re)))
+    ;; AMOUNT is a mandatory property
+    (org-cookbook-recipe-put "AMOUNT" (org-entry-get (point) "AMOUNT") re)
+    re))
+
 (defun org-cookbook--convert-amount (amount target-units)
   "Convert AMOUNT to TARGET-UNITS."
   (let ((calc-line-numbering nil))
@@ -85,79 +178,66 @@ followed by a unit."
                                      (math-read-expr target-units)))
                                    1 nil))))
 
-;; TODO: add fibre
-(cl-defstruct org-cookbook-recipe unit calories fats carbohydrates proteins cost)
+(defun org-cookbook--divide-amounts (divident divisor)
+  "Divide DIVIDENT by DIVISOR.
 
-(defun org-cookbook--get-properties ()
-  "Get properties of recipe at point."
-  (let ((props (org-entry-properties)))
-    (make-org-cookbook-recipe
-     :unit (cdr (assoc "UNIT" props))
-     :proteins (string-to-number (cdr (assoc "PROTEINS" props)))
-     :carbohydrates (string-to-number (cdr (assoc "CARBOHYDRATES" props)))
-     :fats (string-to-number (cdr (assoc "FATS" props)))
-     :calories (string-to-number (cdr (assoc "CALORIES" props)))
-     :cost (or (--when-let (cdr (assoc "COST" props)) (string-to-number it)) 0))))
+DIVIDENT and DIVISOR are amounts with units."
+  (let ((calc-line-numbering nil))
+    (string-to-number
+     (math-format-stack-value
+      (list (math-simplify-units
+             (math-normalize
+              (math-div
+               (math-read-expr divident)
+               (math-read-expr divisor))))
+            1 nil)))))
 
-;; TODO: finish unit conversion
-(defun org-cookbook--scale-recipe (recipe units)
-  "Scale a RECIPE (or ingredient) to UNITS."
-  (let ((multiple (/ (float (string-to-number units))
-                     (string-to-number (org-cookbook-recipe-unit recipe)))))
-    (make-org-cookbook-recipe
-     :proteins (* multiple (org-cookbook-recipe-proteins recipe))
-     :carbohydrates (* multiple (org-cookbook-recipe-carbohydrates recipe))
-     :fats (* multiple (org-cookbook-recipe-fats recipe))
-     :calories (* multiple (org-cookbook-recipe-calories recipe))
-     :cost (* multiple (org-cookbook-recipe-cost recipe)))))
+(defun org-cookbook-scale-recipe (recipe base)
+  "Scale a RECIPE (or ingredient) to BASE.
 
-(defun org-cookbook--add-properties (a b)
-  "Add properties of two ingredients A and B."
-  (make-org-cookbook-recipe
-   :proteins (+ (org-cookbook-recipe-proteins a) (org-cookbook-recipe-proteins b))
-   :carbohydrates (+ (org-cookbook-recipe-carbohydrates a) (org-cookbook-recipe-carbohydrates b))
-   :fats (+ (org-cookbook-recipe-fats a) (org-cookbook-recipe-fats b))
-   :calories (+ (org-cookbook-recipe-calories a) (org-cookbook-recipe-calories b))
-   :cost (+ (org-cookbook-recipe-cost a) (org-cookbook-recipe-cost b))))
+For example, if RECIPE is a primary ingredient with 100g listing
+and BASE is 25g, all the properties will be scaled by 1/4."
+  (let* ((multiple (org-cookbook--divide-amounts
+                    base
+                    (org-cookbook-recipe-get "AMOUNT" recipe)))
+         (re (org-cookbook-map-recipe
+               (lambda (_ val) (* val multiple))
+               recipe)))
+    (org-cookbook-recipe-put "AMOUNT" base re)
+    re))
 
-;; If I specify UNIT in 100g or 100ml, I will usually get parts in the
-;; same unit (or just scaled up or down like kg or l) => the ratio is
-;; not multiplicative but divisive, e.g. 25g of 100g base should give
-;; me 1/4 or 0.25 multiple
-
-;; When I deal in pieces (for example multiplying pieces of bread or
-;; carrots) I want it to be multiplicative (with the base given as 1
-;; piece)
+(defun org-cookbook-sum-properties (a b)
+  "Sum properties of two ingredients A and B."
+  (org-cookbook-map-recipe (lambda (_ v w) (+ v w)) a b))
 
 ;; TODO: pass a cache through the computation to speed up
-(defun org-cookbook--recompute-recipe ()
+(defun org-cookbook-recompute-recipe ()
   "Recompute recipe properties."
   (save-excursion
     (if (org-cookbook--goto-ingredient-table)
         (let* ((raw-table-data (-remove-item 'hline (org-table-to-lisp)))
-               (normalized-recipe (-map (-lambda ((name amount))
-                                          (list
-                                           name
-                                           amount
-                                           (org-cookbook--get-recipe name)))
-                                        raw-table-data))
+               (ingredients (-map (-lambda ((name amount))
+                                    (list
+                                     name
+                                     amount
+                                     (org-cookbook--get-recipe name)))
+                                  raw-table-data))
                ;; TODO: add some 'data structure' to hold this
-               (re (make-org-cookbook-recipe :unit "1" :proteins 0 :carbohydrates 0 :fats 0 :cost 0 :calories 0)))
+               (re (make-org-cookbook-recipe)))
           (save-excursion
-            (-each normalized-recipe
+            (-each ingredients
               (-lambda ((_name amount pos))
                 (goto-char pos)
-                (let* ((ingredient (org-cookbook--recompute-recipe))
-                       (scaled-ingredient (org-cookbook--scale-recipe ingredient amount)))
-                  (setq re (org-cookbook--add-properties re scaled-ingredient))))))
-          (org-entry-put (point) "UNIT" "1")
-          (org-entry-put (point) "CALORIES" (number-to-string (org-cookbook-recipe-calories re)))
-          (org-entry-put (point) "FATS" (number-to-string (org-cookbook-recipe-fats re)))
-          (org-entry-put (point) "CARBOHYDRATES" (number-to-string (org-cookbook-recipe-carbohydrates re)))
-          (org-entry-put (point) "PROTEINS" (number-to-string (org-cookbook-recipe-proteins re)))
-          (org-entry-put (point) "COST" (number-to-string (org-cookbook-recipe-cost re)))
+                (let* ((ingredient (org-cookbook-recompute-recipe))
+                       (scaled-ingredient (org-cookbook-scale-recipe ingredient amount)))
+                  (setq re (org-cookbook-sum-properties re scaled-ingredient))))))
+          (org-entry-put (point) "AMOUNT" "1")
+          (org-cookbook-map-recipe
+            (lambda (name value)
+              (org-entry-put (point) name (format "%.3f" value)))
+            re)
           re)
-      (org-cookbook--get-properties))))
+      (org-cookbook-get-properties))))
 
 (provide 'org-cookbook)
 ;;; org-cookbook.el ends here
