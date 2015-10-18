@@ -50,7 +50,7 @@ start of the ingredient table and returns position."
   (let (table)
     (save-excursion
       (org-back-to-heading)
-      (setq table (re-search-forward "^|-" (save-excursion (org-end-of-subtree t)) t)))
+      (setq table (re-search-forward "^ *|-" (save-excursion (org-end-of-subtree t)) t)))
     (when table
       (goto-char table))))
 
