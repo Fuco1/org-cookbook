@@ -29,6 +29,8 @@
 (require 'dash)
 
 (require 'org)
+(require 'calc)
+(require 'calc-units)
 
 (defun org-cookbook--is-primary-p ()
   "Test if the recipe is a primary ingredient.
