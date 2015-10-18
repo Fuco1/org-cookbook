@@ -63,6 +63,8 @@ start of the ingredient table and returns position."
       (beginning-of-line)
       (point))))
 
+;; TODO: this is no longer necessary as we use calc to parse and
+;; manipulate units
 (cl-defstruct org-cookbook-amount amount unit)
 
 (defun org-cookbook--parse-amount (amount)
