@@ -212,9 +212,21 @@ and BASE is 25g, all the properties will be scaled by 1/4."
   "Sum properties of two ingredients A and B."
   (org-cookbook-map-recipe (lambda (_ v w) (+ v w)) a b))
 
+(defun org-cookbook-recompute-all ()
+  "Recompute all recipes."
+  (interactive)
+  (let ((cache (make-hash-table)))
+    (org-map-entries (lambda () (org-cookbook-recompute-recipe cache) t)))
+  (message "Recomputing done."))
+
 ;; TODO: pass a cache through the computation to speed up
-(defun org-cookbook-recompute-recipe ()
-  "Recompute recipe properties."
+(defun org-cookbook-recompute-recipe (&optional cache)
+  "Recompute recipe properties.
+
+CACHE is a hash table caching sub-recipe results.  Usually it is
+not necessary to supply as it is created internally
+automatically."
+  (unless cache (setq cache (make-hash-table)))
   (save-excursion
     (if (org-cookbook--goto-ingredient-table)
         (let* ((raw-table-data (-remove-item 'hline (org-table-to-lisp)))
@@ -230,16 +242,22 @@ and BASE is 25g, all the properties will be scaled by 1/4."
             (-each ingredients
               (-lambda ((_name amount pos))
                 (goto-char pos)
-                (let* ((ingredient (org-cookbook-recompute-recipe))
+                (let* ((ingredient (gethash pos cache (org-cookbook-recompute-recipe cache)))
                        (scaled-ingredient (org-cookbook-scale-recipe ingredient amount)))
+                  (puthash pos ingredient cache)
                   (setq re (org-cookbook-sum-properties re scaled-ingredient))))))
           (org-entry-put (point) "AMOUNT" "1")
           (org-cookbook-map-recipe
-            (lambda (name value)
-              (org-entry-put (point) name (format "%.3f" value)))
-            re)
+           (lambda (name value)
+             (org-entry-put (point) name (format "%.3f" value)))
+           re)
           re)
-      (org-cookbook-get-properties))))
+      (puthash
+       (save-excursion
+         (org-back-to-heading t)
+         (point))
+       (org-cookbook-get-properties)
+       cache))))
 
 (provide 'org-cookbook)
 ;;; org-cookbook.el ends here
