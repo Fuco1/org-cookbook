@@ -38,7 +38,7 @@
 A primary ingredient is not composed of any other ingredient of
 recipe."
   (save-excursion
-    (org-back-to-heading)
+    (org-back-to-heading t)
     ;; TODO: abstract this search, it is replicated verbatim below
     (not (re-search-forward "^|-" (save-excursion (org-end-of-subtree t)) t))))
 
@@ -49,7 +49,7 @@ Returns nil for primary recipes, otherwise positions the point at
 start of the ingredient table and returns position."
   (let (table)
     (save-excursion
-      (org-back-to-heading)
+      (org-back-to-heading t)
       (setq table (re-search-forward "^ *|-" (save-excursion (org-end-of-subtree t)) t)))
     (when table
       (goto-char table))))
