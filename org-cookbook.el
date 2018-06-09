@@ -63,21 +63,6 @@ start of the ingredient table and returns position."
       (beginning-of-line)
       (point))))
 
-;; TODO: this is no longer necessary as we use calc to parse and
-;; manipulate units
-(cl-defstruct org-cookbook-amount amount unit)
-
-(defun org-cookbook--parse-amount (amount)
-  "Parse AMOUNT.
-
-Amount is a number (possibly with . or , as decimal separator)
-followed by a unit."
-  (save-match-data
-    (string-match "\\([0-9]+\\(?:[,.][0-9]+\\)?\\)[[:space:]]*\\(.*\\)" amount)
-    (make-org-cookbook-amount
-     :amount (string-to-number (replace-regexp-in-string "," "." (match-string 1 amount)))
-     :unit (match-string 2 amount))))
-
 (defun make-org-cookbook-recipe (&rest args)
   "Make new cookbook recipe.
 
